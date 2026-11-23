@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Входящие заявки</title>
+  <style>
+    body { max-width: 40rem; margin: 2rem auto; padding: 0 1rem; font: 1rem/1.5 system-ui, sans-serif; }
+    textarea { box-sizing: border-box; display: block; width: 100%; margin: .5rem 0; padding: .5rem; font: inherit; }
+    button { padding: .4rem .8rem; font: inherit; }
+    button:disabled { opacity: .6; }
+    pre { white-space: pre-wrap; }
+    #outcome { margin-top: 1.25rem; }
+    #status { margin: 0 0 .75rem; }
+    #topic, #draft { margin: 0 0 .75rem; }
+    #draft { background: #f4f4f4; padding: .75rem; }
+  </style>
+</head>
+<body>
+  <h1>Входящие заявки</h1>
+  <form>
+    <label for="message">Текст заявки</label>
+    <textarea id="message" rows="4"></textarea>
+    <button type="submit">Разобрать заявку</button>
+  </form>
+  <section id="outcome" aria-live="polite">
+    <p id="status"></p>
+    <p id="topic" hidden></p>
+    <pre id="draft" hidden></pre>
+  </section>
+  <script type="module">
+    const TOPIC_LABELS = {
+      delivery: "Доставка",
+      pricing: "Стоимость",
+      other: "Другое",
+    };
+
+    const form = document.querySelector("form");
+    const message = document.querySelector("#message");
+    const button = document.querySelector("button[type=submit]");
+    const statusEl = document.querySelector("#status");
+    const topicEl = document.querySelector("#topic");
+    const draftEl = document.querySelector("#draft");
+
+    let requestSeq = 0;
+
+    function clearResult() {
+      topicEl.hidden = true;
+      draftEl.hidden = true;
+      topicEl.textContent = "";
+      draftEl.textContent = "";
+    }
+
+    function showReady(data) {
+      const topicLabel = TOPIC_LABELS[data.topic] ?? data.topic;
+      statusEl.textContent = "Результат готов к проверке. Прочитайте черновик и решите, что отправить клиенту.";
+      topicEl.textContent = `Тема заявки: ${topicLabel}`;
+      draftEl.textContent = data.draft;
+      topicEl.hidden = false;
+      draftEl.hidden = false;
+    }
+
+    function showManualReview() {
+      clearResult();
+      statusEl.textContent = "Не удалось автоматически обработать заявку. Пожалуйста, разберите её вручную.";
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const seq = ++requestSeq;
+      const submittedText = message.value;
+      button.disabled = true;
+      clearResult();
+      statusEl.textContent = "Обработка заявки…";
+
+      try {
+        const reply = await fetch("/api/triage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: submittedText }),
+        });
+
+        let data;
+        try {
+          data = await reply.json();
+        } catch {
+          data = null;
+        }
+
+        if (seq !== requestSeq) return;
+
+        if (data?.status === "ready") {
+          showReady(data);
+          return;
+        }
+        if (data?.status === "manual_review") {
+          showManualReview();
+          return;
+        }
+        if (data?.status === "invalid_input" || reply.status === 400) {
+          clearResult();
+          statusEl.textContent = "Введите непустой текст заявки.";
+          return;
+        }
+
+        clearResult();
+        statusEl.textContent = "Не удалось обработать заявку. Попробуйте ещё раз.";
+      } catch {
+        if (seq !== requestSeq) return;
+        clearResult();
+        statusEl.textContent = "Сетевая ошибка. Проверьте соединение и попробуйте ещё раз.";
+      } finally {
+        if (seq === requestSeq) button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
